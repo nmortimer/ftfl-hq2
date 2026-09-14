@@ -590,6 +590,14 @@ td.num {
   margin-bottom: 8px;
 }
 
+.sync-line {
+  font-size: 13px;
+  margin: 4px 0;
+  padding: 6px 10px;
+  background: var(--surface-2);
+  border-radius: 6px;
+}
+
 .activity-raw {
   background: var(--surface-2);
   border: 1px solid var(--border);
