@@ -79,9 +79,11 @@ export interface FleaflickerTeamRecord {
  * Returns null on any failure (not configured, league not found, offline)
  * so the League Summary can just show a dash instead of crashing.
  *
- * Field names below (record_overall, points_for, etc.) are confirmed
- * against Fleaflicker's official API docs (fleaflicker.com/api-docs) —
- * this is the real response shape, not a guess.
+ * Field names (recordOverall, pointsFor, etc.) are camelCase, confirmed
+ * against a real response from this league — Fleaflicker's own docs show
+ * these as snake_case (record_overall) because that's the underlying
+ * proto field name, but the actual JSON over the wire auto-converts to
+ * camelCase. This tripped up the first version of this function.
  */
 export async function fetchFleaflickerStandings(season: number): Promise<FleaflickerTeamRecord[] | null> {
   try {
@@ -94,14 +96,97 @@ export async function fetchFleaflickerStandings(season: number): Promise<Fleafli
       for (const entry of division.teams ?? []) {
         teams.push({
           name: entry.name ?? '',
-          wins: entry.record_overall?.wins ?? 0,
-          losses: entry.record_overall?.losses ?? 0,
-          ties: entry.record_overall?.ties ?? 0,
-          pointsFor: entry.points_for?.value ?? 0,
+          wins: entry.recordOverall?.wins ?? 0,
+          losses: entry.recordOverall?.losses ?? 0,
+          ties: entry.recordOverall?.ties ?? 0,
+          pointsFor: entry.pointsFor?.value ?? 0,
         });
       }
     }
     return teams;
+  } catch {
+    return null;
+  }
+}
+
+export interface FleaflickerActivityItem {
+  raw: unknown;
+  timeEpochMilli: number;
+  kind: 'drop' | 'transaction' | 'unknown';
+  description: string;
+  teamName?: string;
+  playerName?: string;
+  transactionType?: string;
+}
+
+/**
+ * Confirmed against a real transaction-log response from this league (not
+ * guessed). Key findings that differ from what the docs alone showed:
+ * - Fields are camelCase (timeEpochMilli, proPlayer, nameFull) — see the
+ *   note on fetchFleaflickerStandings for why.
+ * - `team` is a sibling of `transaction` on the item itself, not nested
+ *   inside it.
+ * - Confirmed real type value: "TRANSACTION_DROP" for a cut/drop. No
+ *   confirmed example of an add came through in the sample pulled, so
+ *   anything with a `type` value that ISN'T "TRANSACTION_DROP" is treated
+ *   as a general transaction worth reviewing (safe default — worst case
+ *   it shows up for a cost entry it doesn't need, easy to ignore).
+ * - No bid/waiver-cost field appears anywhere — matches what Nick said:
+ *   this league prices free agents outside Fleaflicker entirely.
+ * - Some items have a player + an `owner` field but no `type` at all —
+ *   these look like "this player is on X's trade block" context entries,
+ *   not actual completed transactions. Treated as informational only.
+ */
+function parseActivityItem(item: any): FleaflickerActivityItem {
+  const timeEpochMilli = Number(item?.timeEpochMilli ?? 0);
+  const teamName = item?.team?.name ?? undefined;
+  const t = item?.transaction;
+  const playerName = t?.player?.proPlayer?.nameFull ?? undefined;
+  const transactionType = t?.type ?? undefined;
+
+  if (playerName && transactionType === 'TRANSACTION_DROP') {
+    return {
+      raw: item,
+      timeEpochMilli,
+      kind: 'drop',
+      teamName,
+      playerName,
+      transactionType,
+      description: `Dropped: ${playerName}${teamName ? ` — ${teamName}` : ''}`,
+    };
+  }
+
+  if (playerName && transactionType) {
+    return {
+      raw: item,
+      timeEpochMilli,
+      kind: 'transaction',
+      teamName,
+      playerName,
+      transactionType,
+      description: `${transactionType}: ${playerName}${teamName ? ` — ${teamName}` : ''}`,
+    };
+  }
+
+  return {
+    raw: item,
+    timeEpochMilli,
+    kind: 'unknown',
+    teamName,
+    playerName,
+    description: playerName
+      ? `${playerName} — roster/trade-block info (not a confirmed transaction)${teamName ? `, ${teamName}` : ''}`
+      : 'Unrecognized activity',
+  };
+}
+
+export async function fetchFleaflickerActivity(): Promise<FleaflickerActivityItem[] | null> {
+  try {
+    const res = await fetch('/api/fleaflicker?endpoint=FetchLeagueTransactions');
+    if (!res.ok) return null;
+    const data = await res.json();
+    const items = data?.items ?? [];
+    return items.map(parseActivityItem);
   } catch {
     return null;
   }
