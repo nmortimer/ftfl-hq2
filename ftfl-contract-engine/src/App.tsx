@@ -7,9 +7,9 @@ import {
   fetchFleaflickerStandings,
   FleaflickerActivityItem,
   FleaflickerTeamRecord,
-  getStoredPassword,
-  login,
   saveContracts,
+  syncFromFleaflicker,
+  SyncSummary,
 } from './lib/api';
 import {
   Contract,
@@ -54,8 +54,9 @@ export default function App() {
     });
   }, []);
 
-  const [isCommissioner, setIsCommissioner] = useState(() => !!getStoredPassword());
-  const [showLogin, setShowLogin] = useState(false);
+  // Commissioner tools are open for now — no login. See README for how to
+  // re-lock this behind a password later.
+  const isCommissioner = true;
 
   const themeVars =
     mode === 'team'
@@ -97,29 +98,10 @@ export default function App() {
             ))}
           </select>
         </div>
-        <button className="commissioner-btn" onClick={() => setShowLogin((s) => !s)}>
-          {isCommissioner ? '🔓 Commissioner' : '🔒 Log in'}
+        <button className="commissioner-btn" onClick={() => setMode('activity')}>
+          📋 FA Review
         </button>
-        {isCommissioner && (
-          <button className="commissioner-btn" onClick={() => setMode('activity')}>
-            📋 FA Review
-          </button>
-        )}
       </nav>
-
-      {showLogin && (
-        <LoginPanel
-          isCommissioner={isCommissioner}
-          onLoggedIn={() => {
-            setIsCommissioner(true);
-            setShowLogin(false);
-          }}
-          onLogOut={() => {
-            setIsCommissioner(false);
-            setShowLogin(false);
-          }}
-        />
-      )}
 
       {mode === 'summary' ? (
         <LeagueSummary
@@ -142,58 +124,6 @@ export default function App() {
         />
       )}
     </div>
-  );
-}
-
-function LoginPanel({
-  isCommissioner,
-  onLoggedIn,
-  onLogOut,
-}: {
-  isCommissioner: boolean;
-  onLoggedIn: () => void;
-  onLogOut: () => void;
-}) {
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [checking, setChecking] = useState(false);
-
-  if (isCommissioner) {
-    return (
-      <div className="login-panel">
-        <span>You're logged in as commissioner for this browser tab.</span>
-        <button className="btn-secondary" onClick={onLogOut}>
-          Log out
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <form
-      className="login-panel"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        setChecking(true);
-        setError(null);
-        const result = await login(password);
-        setChecking(false);
-        if (result.ok) onLoggedIn();
-        else setError(result.error ?? 'Wrong password');
-      }}
-    >
-      <input
-        type="password"
-        placeholder="Commissioner password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        autoFocus
-      />
-      <button className="btn-primary" type="submit" disabled={checking}>
-        {checking ? 'Checking…' : 'Log in'}
-      </button>
-      {error && <span className="login-error">{error}</span>}
-    </form>
   );
 }
 
@@ -304,6 +234,9 @@ function ActivityReview({
   const [loadError, setLoadError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncSummary, setSyncSummary] = useState<SyncSummary | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, { team: string; position: string; cost: number; length: number }>>({});
 
   useEffect(() => {
@@ -316,9 +249,8 @@ function ActivityReview({
   const findContract = (playerName: string) =>
     contracts.find((c) => c.playerName.trim().toLowerCase() === playerName.trim().toLowerCase() && salaryInYear(c, year) != null);
 
-  const dropItems = (activity ?? []).filter((a) => a.kind === 'drop' && a.playerName && findContract(a.playerName));
   const faItems = (activity ?? []).filter((a) => a.kind === 'transaction' && a.playerName && !findContract(a.playerName));
-  const otherItems = (activity ?? []).filter((a) => !dropItems.includes(a) && !faItems.includes(a));
+  const otherItems = (activity ?? []).filter((a) => !faItems.includes(a) && a.kind !== 'drop');
 
   function draftFor(item: FleaflickerActivityItem) {
     const matchedTeam = teams.find((t) => t.name.trim().toLowerCase() === (item.teamName ?? '').trim().toLowerCase());
@@ -351,13 +283,6 @@ function ActivityReview({
     setContracts([...contracts, newContract]);
   }
 
-  function confirmDrop(item: FleaflickerActivityItem) {
-    const match = findContract(item.playerName!);
-    if (!match) return;
-    if (!confirm(`Fleaflicker shows ${item.playerName} was dropped by ${item.teamName ?? 'their team'}. Cut this contract?`)) return;
-    setContracts(contracts.filter((c) => c.id !== match.id));
-  }
-
   async function handleSave() {
     setSaving(true);
     setSaveMsg(null);
@@ -366,36 +291,80 @@ function ActivityReview({
     setSaveMsg(result.ok ? 'Saved.' : `Not saved: ${result.error}`);
   }
 
+  async function handleSync() {
+    setSyncing(true);
+    setSyncError(null);
+    setSyncSummary(null);
+    const result = await syncFromFleaflicker(year);
+    setSyncing(false);
+    if (result.ok && result.summary) {
+      setSyncSummary(result.summary);
+      const live = await fetchContracts();
+      if (live) setContracts(live);
+    } else {
+      setSyncError(result.error ?? 'Sync failed');
+    }
+  }
+
+  const totalSyncChanges = syncSummary
+    ? syncSummary.cuts.length + syncSummary.trades.length + syncSummary.taxiChanges.length + syncSummary.irChanges.length
+    : 0;
+
   return (
     <>
       <header className="page-header summary-header">
         <div>
           <h1>Free agent review</h1>
-          <p className="sub">Pulled from Fleaflicker's transaction log — drops and pickups needing your input.</p>
+          <p className="sub">
+            Trades, cuts, and taxi/IR are synced automatically from Fleaflicker's current rosters. Only new free
+            agent pickups need you to enter a cost below.
+          </p>
         </div>
       </header>
+
+      <div className="commissioner-bar">
+        <button className="btn-primary" onClick={handleSync} disabled={syncing}>
+          {syncing ? 'Syncing…' : '🔄 Sync trades / cuts / taxi / IR'}
+        </button>
+        {syncError && <span className="login-error">{syncError}</span>}
+      </div>
+
+      {syncSummary && (
+        <section className="roster-section">
+          <h2 className="section-title">Sync results</h2>
+          {totalSyncChanges === 0 ? (
+            <p className="muted">No changes — everything already matches Fleaflicker's rosters.</p>
+          ) : (
+            <>
+              {syncSummary.cuts.map((name) => (
+                <p className="sync-line" key={`cut-${name}`}>
+                  Cut: <strong>{name}</strong> (no longer on any Fleaflicker roster)
+                </p>
+              ))}
+              {syncSummary.trades.map((t) => (
+                <p className="sync-line" key={`trade-${t.name}`}>
+                  Traded: <strong>{t.name}</strong> — {teamBySlug(t.from).name} → {teamBySlug(t.to).name}
+                </p>
+              ))}
+              {syncSummary.taxiChanges.map((line) => (
+                <p className="sync-line" key={`taxi-${line}`}>
+                  {line}
+                </p>
+              ))}
+              {syncSummary.irChanges.map((line) => (
+                <p className="sync-line" key={`ir-${line}`}>
+                  {line}
+                </p>
+              ))}
+            </>
+          )}
+        </section>
+      )}
 
       {loadError && (
         <p className="footnote">
           Couldn't reach Fleaflicker's transaction log — check FLEAFLICKER_LEAGUE_ID is set and try again.
         </p>
-      )}
-
-      {dropItems.length > 0 && (
-        <section className="roster-section">
-          <h2 className="section-title">Confirmed drops</h2>
-          <p className="section-note">Fleaflicker shows these players were dropped, and each still has a contract on file.</p>
-          {dropItems.map((item) => (
-            <div className="add-form-row drop-row" key={item.playerName}>
-              <span>
-                <strong>{item.playerName}</strong> — dropped by {item.teamName ?? 'unknown team'}
-              </span>
-              <button className="btn-tiny btn-danger" onClick={() => confirmDrop(item)}>
-                Confirm cut
-              </button>
-            </div>
-          ))}
-        </section>
       )}
 
       {activity && faItems.length === 0 && !loadError && (
@@ -446,7 +415,7 @@ function ActivityReview({
         );
       })}
 
-      {(faItems.length > 0 || dropItems.length > 0) && (
+      {faItems.length > 0 && (
         <div className="commissioner-bar">
           <button className="btn-primary" onClick={handleSave} disabled={saving}>
             {saving ? 'Saving…' : 'Save to server'}
@@ -458,11 +427,7 @@ function ActivityReview({
       {otherItems.length > 0 && (
         <section className="roster-section">
           <h2 className="section-title">Other recent activity</h2>
-          <p className="section-note">
-            Trades and taxi/IR moves aren't auto-detected yet — Fleaflicker's data for those looks like
-            trade-block context rather than confirmed completed moves. Use the Trade / Taxi / IR controls on the
-            team page for those.
-          </p>
+          <p className="section-note">Informational only — not confirmed as actionable transactions.</p>
           {otherItems.slice(0, 15).map((item, i) => (
             <details key={i} className="activity-raw">
               <summary>{item.description}</summary>
