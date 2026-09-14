@@ -1,7 +1,5 @@
 import type { Contract } from './contracts';
 
-const PASSWORD_KEY = 'ftfl:commissioner-password';
-
 /**
  * Fetches live contracts from the backend. Returns null (not a throw) on
  * any failure — no deployed API, no KV configured, offline, whatever —
@@ -19,47 +17,20 @@ export async function fetchContracts(): Promise<Contract[] | null> {
   }
 }
 
-export function getStoredPassword(): string | null {
-  return sessionStorage.getItem(PASSWORD_KEY);
-}
-
-export function clearStoredPassword() {
-  sessionStorage.removeItem(PASSWORD_KEY);
-}
-
-/** Checks a password against the server and stores it for this tab's session if correct. */
-export async function login(password: string): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const res = await fetch('/api/auth', {
-      method: 'POST',
-      headers: { 'x-commissioner-password': password },
-    });
-    if (res.ok) {
-      sessionStorage.setItem(PASSWORD_KEY, password);
-      return { ok: true };
-    }
-    const body = await res.json().catch(() => ({}));
-    return { ok: false, error: body.error || 'Wrong password' };
-  } catch {
-    return { ok: false, error: 'Could not reach the server' };
-  }
-}
-
+/**
+ * Login/password checking is DISABLED for now — commissioner tools are
+ * open to anyone with the link. See README for how to re-enable
+ * COMMISSIONER_PASSWORD checking on the server side later.
+ */
 export async function saveContracts(contracts: Contract[]): Promise<{ ok: boolean; error?: string }> {
-  const password = getStoredPassword();
-  if (!password) return { ok: false, error: 'Not logged in' };
   try {
     const res = await fetch('/api/contracts', {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-commissioner-password': password,
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ contracts }),
     });
     if (res.ok) return { ok: true };
     const body = await res.json().catch(() => ({}));
-    if (res.status === 401) clearStoredPassword();
     return { ok: false, error: body.error || `Save failed (${res.status})` };
   } catch {
     return { ok: false, error: 'Could not reach the server' };
@@ -189,5 +160,28 @@ export async function fetchFleaflickerActivity(): Promise<FleaflickerActivityIte
     return items.map(parseActivityItem);
   } catch {
     return null;
+  }
+}
+
+export interface SyncSummary {
+  cuts: string[];
+  trades: { name: string; from: string; to: string }[];
+  taxiChanges: string[];
+  irChanges: string[];
+}
+
+/**
+ * Runs the server-side reconciliation (trades/cuts/taxi/IR) against
+ * Fleaflicker's current rosters and saves the result immediately —
+ * no per-item confirmation, one click does everything.
+ */
+export async function syncFromFleaflicker(year: number): Promise<{ ok: boolean; summary?: SyncSummary; error?: string }> {
+  try {
+    const res = await fetch(`/api/sync?year=${year}`, { method: 'POST' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: body.error || `Sync failed (${res.status})` };
+    return { ok: true, summary: body.summary };
+  } catch {
+    return { ok: false, error: 'Could not reach the server' };
   }
 }
