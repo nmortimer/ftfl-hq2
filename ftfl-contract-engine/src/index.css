@@ -543,6 +543,13 @@ td.num {
   width: 48px;
 }
 
+.trade-select {
+  width: auto;
+  max-width: 110px;
+  font-size: 11px;
+  padding: 3px 4px;
+}
+
 .edit-actions {
   white-space: nowrap;
 }
@@ -573,4 +580,35 @@ td.num {
 
 .add-form-row input[type="number"] {
   width: 90px;
+}
+
+.drop-row {
+  justify-content: space-between;
+  background: var(--surface-2);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+}
+
+.activity-raw {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.activity-raw summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.activity-raw pre {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
