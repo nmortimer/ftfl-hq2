@@ -3,7 +3,9 @@ import { realContracts } from './data/realContracts';
 import { teams, teamBySlug } from './data/teams';
 import {
   fetchContracts,
+  fetchFleaflickerActivity,
   fetchFleaflickerStandings,
+  FleaflickerActivityItem,
   FleaflickerTeamRecord,
   getStoredPassword,
   login,
@@ -38,7 +40,7 @@ function money(n: number | null): string {
 
 export default function App() {
   const [year, setYear] = useState(2026);
-  const [mode, setMode] = useState<'summary' | 'team'>('summary');
+  const [mode, setMode] = useState<'summary' | 'team' | 'activity'>('summary');
   const [teamSlug, setTeamSlug] = useState(teams[0].slug);
   const team = teamBySlug(teamSlug);
 
@@ -98,6 +100,11 @@ export default function App() {
         <button className="commissioner-btn" onClick={() => setShowLogin((s) => !s)}>
           {isCommissioner ? '🔓 Commissioner' : '🔒 Log in'}
         </button>
+        {isCommissioner && (
+          <button className="commissioner-btn" onClick={() => setMode('activity')}>
+            📋 FA Review
+          </button>
+        )}
       </nav>
 
       {showLogin && (
@@ -123,6 +130,8 @@ export default function App() {
             setMode('team');
           }}
         />
+      ) : mode === 'activity' ? (
+        <ActivityReview contracts={contracts} setContracts={setContracts} year={year} />
       ) : (
         <TeamPage
           teamSlug={teamSlug}
@@ -282,6 +291,190 @@ function LeagueSummary({
   );
 }
 
+function ActivityReview({
+  contracts,
+  setContracts,
+  year,
+}: {
+  contracts: Contract[];
+  setContracts: (c: Contract[]) => void;
+  year: number;
+}) {
+  const [activity, setActivity] = useState<FleaflickerActivityItem[] | null>(null);
+  const [loadError, setLoadError] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, { team: string; position: string; cost: number; length: number }>>({});
+
+  useEffect(() => {
+    fetchFleaflickerActivity().then((data) => {
+      if (data) setActivity(data);
+      else setLoadError(true);
+    });
+  }, []);
+
+  const findContract = (playerName: string) =>
+    contracts.find((c) => c.playerName.trim().toLowerCase() === playerName.trim().toLowerCase() && salaryInYear(c, year) != null);
+
+  const dropItems = (activity ?? []).filter((a) => a.kind === 'drop' && a.playerName && findContract(a.playerName));
+  const faItems = (activity ?? []).filter((a) => a.kind === 'transaction' && a.playerName && !findContract(a.playerName));
+  const otherItems = (activity ?? []).filter((a) => !dropItems.includes(a) && !faItems.includes(a));
+
+  function draftFor(item: FleaflickerActivityItem) {
+    const matchedTeam = teams.find((t) => t.name.trim().toLowerCase() === (item.teamName ?? '').trim().toLowerCase());
+    return (
+      drafts[item.playerName!] ?? {
+        team: matchedTeam?.slug ?? teams[0].slug,
+        position: 'WR',
+        cost: 1,
+        length: 3,
+      }
+    );
+  }
+
+  function updateDraft(playerName: string, patch: Partial<{ team: string; position: string; cost: number; length: number }>) {
+    setDrafts({ ...drafts, [playerName]: { ...draftFor({ playerName } as any), ...patch } });
+  }
+
+  function addFromDraft(item: FleaflickerActivityItem) {
+    const d = draftFor(item);
+    const newContract: Contract = {
+      id: `fa-${Date.now()}`,
+      kind: 'formula',
+      playerName: item.playerName!,
+      position: d.position,
+      team: d.team,
+      baseSalary: d.cost,
+      startYear: year,
+      lengthYears: d.length,
+    };
+    setContracts([...contracts, newContract]);
+  }
+
+  function confirmDrop(item: FleaflickerActivityItem) {
+    const match = findContract(item.playerName!);
+    if (!match) return;
+    if (!confirm(`Fleaflicker shows ${item.playerName} was dropped by ${item.teamName ?? 'their team'}. Cut this contract?`)) return;
+    setContracts(contracts.filter((c) => c.id !== match.id));
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setSaveMsg(null);
+    const result = await saveContracts(contracts);
+    setSaving(false);
+    setSaveMsg(result.ok ? 'Saved.' : `Not saved: ${result.error}`);
+  }
+
+  return (
+    <>
+      <header className="page-header summary-header">
+        <div>
+          <h1>Free agent review</h1>
+          <p className="sub">Pulled from Fleaflicker's transaction log — drops and pickups needing your input.</p>
+        </div>
+      </header>
+
+      {loadError && (
+        <p className="footnote">
+          Couldn't reach Fleaflicker's transaction log — check FLEAFLICKER_LEAGUE_ID is set and try again.
+        </p>
+      )}
+
+      {dropItems.length > 0 && (
+        <section className="roster-section">
+          <h2 className="section-title">Confirmed drops</h2>
+          <p className="section-note">Fleaflicker shows these players were dropped, and each still has a contract on file.</p>
+          {dropItems.map((item) => (
+            <div className="add-form-row drop-row" key={item.playerName}>
+              <span>
+                <strong>{item.playerName}</strong> — dropped by {item.teamName ?? 'unknown team'}
+              </span>
+              <button className="btn-tiny btn-danger" onClick={() => confirmDrop(item)}>
+                Confirm cut
+              </button>
+            </div>
+          ))}
+        </section>
+      )}
+
+      {activity && faItems.length === 0 && !loadError && (
+        <p className="muted">No pending free agent pickups without a contract on file — you're caught up.</p>
+      )}
+
+      {faItems.map((item) => {
+        const d = draftFor(item);
+        return (
+          <section className="roster-section add-contract-form" key={item.playerName}>
+            <h2 className="section-title">{item.playerName}</h2>
+            <p className="section-note">{item.description}</p>
+            <div className="add-form-row">
+              <select value={d.team} onChange={(e) => updateDraft(item.playerName!, { team: e.target.value })}>
+                {teams.map((t) => (
+                  <option key={t.slug} value={t.slug}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+              <select value={d.position} onChange={(e) => updateDraft(item.playerName!, { position: e.target.value })}>
+                {POSITIONS.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="number"
+                min={1}
+                value={d.cost}
+                onChange={(e) => updateDraft(item.playerName!, { cost: Number(e.target.value) })}
+                title="FA cost ($) — not tracked in Fleaflicker, enter manually"
+              />
+              <input
+                type="number"
+                min={1}
+                max={6}
+                value={d.length}
+                onChange={(e) => updateDraft(item.playerName!, { length: Number(e.target.value) })}
+                title="Contract length (years)"
+              />
+              <button className="btn-primary" onClick={() => addFromDraft(item)}>
+                Add contract
+              </button>
+            </div>
+          </section>
+        );
+      })}
+
+      {(faItems.length > 0 || dropItems.length > 0) && (
+        <div className="commissioner-bar">
+          <button className="btn-primary" onClick={handleSave} disabled={saving}>
+            {saving ? 'Saving…' : 'Save to server'}
+          </button>
+          {saveMsg && <span className="save-msg">{saveMsg}</span>}
+        </div>
+      )}
+
+      {otherItems.length > 0 && (
+        <section className="roster-section">
+          <h2 className="section-title">Other recent activity</h2>
+          <p className="section-note">
+            Trades and taxi/IR moves aren't auto-detected yet — Fleaflicker's data for those looks like
+            trade-block context rather than confirmed completed moves. Use the Trade / Taxi / IR controls on the
+            team page for those.
+          </p>
+          {otherItems.slice(0, 15).map((item, i) => (
+            <details key={i} className="activity-raw">
+              <summary>{item.description}</summary>
+              <pre>{JSON.stringify(item.raw, null, 2)}</pre>
+            </details>
+          ))}
+        </section>
+      )}
+    </>
+  );
+}
+
 function TeamPage({
   teamSlug,
   year,
@@ -327,6 +520,11 @@ function TeamPage({
   function cutContract(id: string) {
     if (!confirm('Cut this player? This removes the contract entirely.')) return;
     setContracts(contracts.filter((c) => c.id !== id));
+  }
+
+  function tradeContract(id: string, newTeamSlug: string) {
+    if (!newTeamSlug || newTeamSlug === teamSlug) return;
+    updateContract(id, { team: newTeamSlug });
   }
 
   function toggleTaxiThisYear(contract: Contract) {
@@ -421,6 +619,22 @@ function TeamPage({
                   <button className="btn-tiny btn-danger" onClick={() => cutContract(contract.id)}>
                     Cut
                   </button>
+                  <select
+                    className="edit-input trade-select"
+                    value=""
+                    onChange={(e) => tradeContract(contract.id, e.target.value)}
+                  >
+                    <option value="" disabled>
+                      Trade to…
+                    </option>
+                    {teams
+                      .filter((t) => t.slug !== teamSlug)
+                      .map((t) => (
+                        <option key={t.slug} value={t.slug}>
+                          {t.name}
+                        </option>
+                      ))}
+                  </select>
                 </td>
               )}
             </tr>
@@ -527,7 +741,8 @@ function TeamPage({
       <p className="footnote">
         "Resign" projects the final contracted rate forward using the confirmed escalation increment for as
         many years as the player has been at that rate. This is a consistent anchor, not a market-value
-        forecast. Cut penalty: 50% of each remaining year's salary, rounded up.
+        forecast. Cut penalty: 50% of the player's current salary, applied across every remaining contract
+        year, rounded up once at the end.
       </p>
     </>
   );
