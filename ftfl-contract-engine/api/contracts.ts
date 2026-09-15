@@ -16,8 +16,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!Array.isArray(contracts)) {
       return res.status(400).json({ error: 'Body must be { contracts: Contract[] }' });
     }
-    const saved = await saveAllContracts(contracts);
-    return res.status(200).json({ contracts: saved });
+    try {
+      const saved = await saveAllContracts(contracts);
+      return res.status(200).json({ contracts: saved });
+    } catch (err: any) {
+      return res.status(500).json({
+        error: `Save failed: ${err?.message}. This usually means Vercel KV isn't set up yet — check the Storage tab in your Vercel project.`,
+      });
+    }
   }
 
   res.setHeader('Allow', 'GET, PUT');
