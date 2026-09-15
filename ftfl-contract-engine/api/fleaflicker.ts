@@ -6,7 +6,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 //
 // Only these two endpoints are allowed through, to keep this from being an
 // open proxy to arbitrary URLs.
-const ALLOWED_ENDPOINTS = new Set(['FetchLeagueStandings', 'FetchLeagueScoreboard']);
+const ALLOWED_ENDPOINTS = new Set(['FetchLeagueStandings', 'FetchLeagueScoreboard', 'FetchLeagueTransactions']);
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') {

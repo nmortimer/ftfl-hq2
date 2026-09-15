@@ -122,18 +122,17 @@ export function yearsRemaining(contract: Contract, asOfYear: number): number {
 }
 
 /**
- * Confirmed rule: cutting a player early costs 50% of each remaining
- * contract year's scheduled salary, each rounded up, summed into one
- * cap hit applied the year of the cut.
+ * Confirmed rule: cutting a player costs 50% of their CURRENT salary
+ * (the rate in the year of the cut), applied flatly across every
+ * remaining contract year — not the escalating future rate for each
+ * year. One rounding at the end, not per-year.
+ * Example: $5 current salary, 1 year remaining → ceil(5 * 0.5 * 1) = 3.
  */
 export function cutPenalty(contract: Contract, cutYear: number): number {
-  let total = 0;
-  for (const y of activeYears(contract)) {
-    if (y <= cutYear) continue;
-    const sal = salaryInYear(contract, y);
-    if (sal != null) total += Math.ceil(sal * 0.5);
-  }
-  return total;
+  const current = salaryInYear(contract, cutYear);
+  if (current == null) return 0;
+  const remaining = yearsRemaining(contract, cutYear);
+  return Math.ceil(current * 0.5 * remaining);
 }
 
 export function isTaxi(contract: Contract, year: number): boolean {
