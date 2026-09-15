@@ -142,6 +142,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     updated.push(next);
   }
 
-  await saveAllContracts(updated);
+  try {
+    await saveAllContracts(updated);
+  } catch (err: any) {
+    return res.status(500).json({
+      error: `Reconciliation computed fine but saving failed: ${err?.message}. This usually means Vercel KV isn't set up yet — check Storage tab in your Vercel project.`,
+    });
+  }
   return res.status(200).json({ contracts: updated, summary });
 }
