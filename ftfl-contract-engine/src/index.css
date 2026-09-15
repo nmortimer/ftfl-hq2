@@ -165,38 +165,43 @@ body {
 }
 
 .hero-slot-photo {
-  background-size: cover;
-  background-position: center;
   border: 2px solid var(--accent2);
-  align-items: flex-end;
-  justify-content: flex-start;
-  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
   overflow: hidden;
+  min-height: 140px;
+}
+
+.hero-stadium-img {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  object-fit: cover;
+  display: block;
 }
 
 .hero-stadium-caption {
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  padding: 6px 10px;
-  margin: 8px;
-  border-radius: 8px;
-  background: rgba(0,0,0,0.72);
-  backdrop-filter: blur(3px);
+  align-items: center;
+  gap: 2px;
+  padding: 8px 10px;
+  background: rgba(0,0,0,0.4);
+  text-align: center;
 }
 
 .hero-stadium-caption .hero-stadium-name {
   font-size: 13px;
   font-weight: 700;
   color: #ffffff;
-  text-shadow: 0 1px 3px rgba(0,0,0,0.9);
 }
 
 .hero-stadium-caption .hero-stadium-capacity {
   font-size: 11px;
   font-weight: 500;
-  color: #ffffff;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.9);
+  color: rgba(255,255,255,0.85);
 }
 
 /* --- Color legend: primary/secondary/base swatches with hex --- */
