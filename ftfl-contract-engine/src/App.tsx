@@ -617,7 +617,8 @@ function TeamPage({
           <h1>{team.name}</h1>
         </div>
         {team.stadium ? (
-          <div className="hero-slot hero-slot-photo" style={{ backgroundImage: `url(${team.stadium.image})` }}>
+          <div className="hero-slot hero-slot-photo">
+            <img className="hero-stadium-img" src={team.stadium.image} alt={team.stadium.name} />
             <div className="hero-stadium-caption">
               <span className="hero-stadium-name">{team.stadium.name}</span>
               <span className="hero-stadium-capacity">Capacity: {team.stadium.capacity.toLocaleString()}</span>
